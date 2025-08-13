@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HandsWare AI - Captura</title>
+</head>
+<body>
+    <h1>Captura de cámara</h1>
+    <video id="video" width="640" height="480" autoplay></video>
+
+    <script>
+        const video = document.getElementById('video');
+
+        // Pedir acceso a la cámara
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => video.srcObject = stream)
+            .catch(err => console.error("Error cámara:", err));
+
+        // Enviar cada 2 segundos un frame al backend
+        setInterval(() => {
+            const canvas = document.createElement("canvas");
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(video, 0, 0);
+
+            canvas.toBlob(blob => {
+                const formData = new FormData();
+                formData.append("file", blob, "frame.jpg");
+
+                fetch("http://localhost:8000/frame", {
+                    method: "POST",
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => console.log("Respuesta:", data))
+                .catch(err => console.error(err));
+            }, "image/jpeg");
+        }, 2000);
+    </script>
+</body>
+</html>

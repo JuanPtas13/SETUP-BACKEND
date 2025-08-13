@@ -1,0 +1,48 @@
+version: "3.10"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: handsware-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: handsware_db
+      DB_USER: handsware_user
+      DB_PASSWORD: 39jsylso225!
+    volumes:
+      - .:/app
+    working_dir: /app 
+    devices:
+      - /dev/video0:/dev/video0
+    privileged: true
+    restart: always
+
+  db:
+    image: mysql:8.0
+    container_name: handsware-db
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: handsware_db
+      MYSQL_USER: handsware_user
+      MYSQL_PASSWORD: 39jsylso225!
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      start_period: 30s
+    restart: always
+
+volumes:
+  mysql_data:
