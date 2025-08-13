@@ -1,0 +1,36 @@
+# Carpetas de Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pkl
+*.log
+
+# Archivos de entorno
+.env
+*.env
+
+# Archivos temporales
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+# Archivos de compilación
+build/
+dist/
+*.egg-info/
+
+# Archivos generados por IDE
+.vscode/
+.idea/
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Docker
+*.pid
+*.sock
+logs/
