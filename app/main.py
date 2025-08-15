@@ -1,6 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, Response, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Response, UploadFile, File,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import logging
 import numpy as np
@@ -10,7 +10,7 @@ from sqlalchemy import text
 from os import getcwd, path
 import base64
 import cv2
-
+import os
 # Import internos
 from app.deteccion.hand_detector import HandDetector
 from app.database import engine, SessionLocal
@@ -68,21 +68,51 @@ def check_database_connection(db: Session = Depends(get_db)):
             "mensaje": f"Fallo en la conexión: {str(e)}"
         }
 
-@app.post("/frame")
-async def process_frame(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        npimg = np.frombuffer(contents, np.uint8)
+@app.get("/camara")
+def abrir_camara():
+    logger.info("Se accedió a la camara")
+    file_path = os.path.join(os.path.dirname(__file__), "..", "client", "index.html")
+    return FileResponse(file_path)
+   
+detector = HandDetector()
+# Servir HTML
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        # Recibir frame como base64
+        data = await websocket.receive_text()
+        # Quitar el prefijo "data:image/jpeg;base64," si existe
+        if data.startswith("data:image"):
+            data = data.split(",")[1]
+
+        # Convertir base64 a np.array
+        img_bytes = base64.b64decode(data)
+        npimg = np.frombuffer(img_bytes, np.uint8)
         frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
 
-        # Procesar frame con el servicio de video
-        result = video_service.process_frame(frame)
+        if frame is not None:
+            # Detectar manos
+            hands = detector.detect_hands_in_frame(frame)
 
-        return JSONResponse(content={"status": "ok", "result": result})
-    except Exception as e:
-        logger.error(f"Error procesando frame: {e}")
-        return JSONResponse(content={"status": "error", "error": str(e)})
+            # Convertir el resultado a un formato JSON serializable
+            serialized_hands = []
+            if isinstance(hands, list):  # Verificar si hands es una lista
+                for hand in hands:  # Iterar sobre cada mano detectada
+                    if hasattr(hand, 'landmark'):  # Verificar si el objeto tiene el atributo 'landmark'
+                        hand_landmarks = []
+                        for landmark in hand.landmark:
+                            hand_landmarks.append({
+                                'x': landmark.x,
+                                'y': landmark.y,
+                                'z': landmark.z
+                            })
+                        serialized_hands.append(hand_landmarks)
 
+            # Retornar landmarks al cliente
+            await websocket.send_json({"manos": serialized_hands})
+
+ 
 # -------------------- CORS --------------------
 app.add_middleware(
     CORSMiddleware,
