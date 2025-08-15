@@ -1,4 +1,4 @@
-version: "3.10"
+
 
 services:
   backend:
@@ -19,6 +19,7 @@ services:
       DB_PASSWORD: 39jsylso225!
     volumes:
       - .:/app
+      - ./client:/client
     working_dir: /app 
     devices:
       - /dev/video0:/dev/video0
