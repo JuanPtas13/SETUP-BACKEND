@@ -2,83 +2,44 @@
 <html>
 <head>
   <title>Detección en Vivo</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-    }
-    video {
-      border: 2px solid black;
-      border-radius: 10px;
-    }
-    .status {
-      font-size: 20px;
-      margin-top: 10px;
-    }
-    .status span {
-      font-weight: bold;
-    }
-    .controls {
-      margin-top: 20px;
-    }
-    button {
-      padding: 10px 20px;
-      margin: 5px;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 16px;
-    }
-    .record { background: green; color: white; }
-    .stop { background: red; color: white; }
-  </style>
 </head>
 <body>
-  <h1>Detección en Vivo</h1>
-
-  <!-- Video -->
   <video id="video" width="640" height="480" autoplay></video>
   <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
 
   <!-- Estado de manos -->
-  <div id="handDetectionStatus" class="status" style="color: blue;">
+  <div id="handDetectionStatus" style="font-size: 24px; color: blue; margin-top: 10px;">
     Esperando detección de manos...
   </div>
 
   <!-- Estado de cara -->
-  <div id="faceDetectionStatus" class="status" style="color: blue;">
+  <div id="faceDetectionStatus" style="font-size: 24px; color: blue; margin-top: 10px;">
     Esperando detección de cara...
-  </div>
-
-  <!-- Controles -->
-  <div class="controls">
-    <label for="labelSelect">Etiqueta:</label>
-    <select id="labelSelect">
-      <option value="normal">Normal</option>
-      <option value="feliz">Feliz</option>
-      <option value="triste">Triste</option>
-      <option value="enojado">Enojado</option>
-      <option value="asustado">Asustado</option>
-    </select>
-    <br><br>
-    <button id="startBtn" class="record">Grabar</button>
-    <button id="stopBtn" class="stop">Parar</button>
   </div>
 
   <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
+
     const handDetectionStatus = document.getElementById('handDetectionStatus');
     const faceDetectionStatus = document.getElementById('faceDetectionStatus');
-    const labelSelect = document.getElementById('labelSelect');
 
-    let recording = false;
+    // Construir URL del WebSocket dinámicamente
+    const wsUrl = `ws://${window.location.host}/ws`;
+    const ws = new WebSocket(wsUrl);
 
-    // Conectar al WebSocket
-    const ws = new WebSocket("ws://localhost:8000/ws");
+    ws.onopen = () => {
+      console.log("✅ Conectado al WebSocket:", wsUrl);
+    };
 
-    ws.onopen = () => console.log("Conectado al servidor WebSocket");
+    ws.onerror = (err) => {
+      console.error("❌ Error en WebSocket:", err);
+    };
+
+    ws.onclose = () => {
+      console.warn("⚠️ WebSocket cerrado.");
+    };
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -86,8 +47,10 @@
       // ----------------- Estado de manos -----------------
       if (data.manos && data.manos.length > 0) {
         handDetectionStatus.textContent = `Manos detectadas: ${data.manos.length}`;
+        handDetectionStatus.style.color = 'green';
       } else {
         handDetectionStatus.textContent = "No se detectan manos.";
+        handDetectionStatus.style.color = 'red';
       }
 
       // ----------------- Estado de cara -----------------
@@ -100,19 +63,6 @@
       }
     };
 
-    // Botones de grabar y parar
-    document.getElementById('startBtn').onclick = () => {
-      recording = true;
-      ws.send(JSON.stringify({ action: "start_recording", label: labelSelect.value }));
-      console.log("Grabación iniciada con etiqueta:", labelSelect.value);
-    };
-
-    document.getElementById('stopBtn').onclick = () => {
-      recording = false;
-      ws.send(JSON.stringify({ action: "stop_recording" }));
-      console.log("Grabación detenida");
-    };
-
     // Acceso a la cámara
     navigator.mediaDevices.getUserMedia({ video: true })
       .then(stream => { video.srcObject = stream; })
@@ -122,7 +72,7 @@
     setInterval(() => {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataURL = canvas.toDataURL("image/jpeg");
-      ws.send(JSON.stringify({ frame: dataURL, recording }));
+      ws.send(dataURL);
     }, 100);
   </script>
 </body>

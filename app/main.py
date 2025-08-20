@@ -18,7 +18,8 @@ from app.database import engine, SessionLocal
 from app.models.models import Base
 from app.services.video_prosesing import VideoProcessingService  
 from app.deteccion.face_detector import FaceDetector
-
+from app.services.data_logger import DataLogger
+from app.services.state_manager import RecordingState
 app = FastAPI()
 
 # Crear tablas si no existen
@@ -79,26 +80,50 @@ def abrir_camara():
     logger.info("Se accedió a la camara")
     file_path = os.path.join(os.path.dirname(__file__), "..", "client", "index.html")
     return FileResponse(file_path)
-   
-detector = HandDetector()
 
+@app.get("/camara_enhanced")
+def abrir_camara_enhanced():
+    logger.info("Se accedió a la camara mejorada")
+    file_path = os.path.join(os.path.dirname(__file__), "..", "client", "index_enhanced.html")
+    return FileResponse(file_path)
 
-# Servir HTML
-             
+# Instancias globales
+data_logger = DataLogger("training_data.h5")
+recorder = RecordingState()
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    print("Cliente conectado al WebSocket")
+
     while True:
-        data = await websocket.receive_text()
-        if data.startswith("data:image"):
-            data = data.split(",")[1]
+        try:
+            data = await websocket.receive_text()
 
-        img_bytes = base64.b64decode(data)
-        npimg = np.frombuffer(img_bytes, np.uint8)
-        frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+            # --- Comandos para grabar ---
+            if data.startswith("START_RECORDING"):
+                _, label, data_type = data.split(":")
+                recorder.start(label=label, data_type=data_type)
+                await websocket.send_text(f"[SERVER] Grabando {data_type} con etiqueta '{label}'")
+                continue
 
-        if frame is not None:
-                # --- Detección de Manos ---
+            if data == "STOP_RECORDING":
+                recorder.stop()
+                await websocket.send_text("[SERVER] Grabación detenida")
+                continue
+
+            # --- Procesamiento de frames ---
+            if data.startswith("data:image"):
+                data = data.split(",")[1]
+
+            img_bytes = base64.b64decode(data)
+            npimg = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                continue
+
+            # --- Detección de Manos ---
             hands = hand_detector.detect_hands_in_frame(frame)
             serialized_hands = []
             if isinstance(hands, list):
@@ -113,7 +138,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             })
                         serialized_hands.append(hand_landmarks)
 
-                # --- Detección de Caras ---
+            # --- Detección de Caras ---
             face_results = face_detector.detectar_rostros(frame)
             serialized_faces = []
             if face_results.detections:
@@ -121,24 +146,32 @@ async def websocket_endpoint(websocket: WebSocket):
                     bboxC = detection.location_data.relative_bounding_box
                     ih, iw, _ = frame.shape
                     x, y, w, h = int(bboxC.xmin * iw), int(bboxC.ymin * ih), \
-                                    int(bboxC.width * iw), int(bboxC.height * ih)
+                                 int(bboxC.width * iw), int(bboxC.height * ih)
                     serialized_faces.append({
-                            'xmin': x,
-                            'ymin': y,
-                            'width': w,
-                            'height': h,
-                            'score': detection.score[0] # El score de confianza
-                        })
-                    # Opcional: dibujar los rostros en el frame antes de enviarlo de vuelta si quisieras visualizarlos en el servidor
-                    # frame = face_detector.dibujar_rostros(frame, face_results)
+                        'xmin': x,
+                        'ymin': y,
+                        'width': w,
+                        'height': h,
+                        'score': detection.score[0]
+                    })
 
+            # --- Guardar si estamos en modo grabación ---
+            if recorder.recording:
+                if recorder.data_type == "hands" and serialized_hands:
+                    data_logger.save(serialized_hands, "hands", recorder.label)
+                elif recorder.data_type == "faces" and serialized_faces:
+                    data_logger.save(serialized_faces, "faces", recorder.label)
 
-                # Retornar landmarks de manos y datos de caras al cliente
+            # --- Respuesta al cliente ---
             await websocket.send_json({
                 "manos": serialized_hands,
-                "cara": serialized_faces # Añadir los datos de la cara aquí
+                "cara": serialized_faces
             })
-    
+
+        except Exception as e:
+            print(f"Error en WebSocket: {e}")
+            break
+
 
  
 # -------------------- CORS --------------------
