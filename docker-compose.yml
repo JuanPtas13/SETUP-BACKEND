@@ -20,6 +20,7 @@ services:
     volumes:
       - .:/app
       - ./client:/client
+      - ./app/saved_data:/app/saved_data
     working_dir: /app 
     devices:
       - /dev/video0:/dev/video0

@@ -20,6 +20,8 @@ from app.services.video_prosesing import VideoProcessingService
 from app.deteccion.face_detector import FaceDetector
 from app.services.data_logger import DataLogger
 from app.services.state_manager import RecordingState
+from app.services.H5Viwer import H5Viewer
+
 app = FastAPI()
 
 # Crear tablas si no existen
@@ -51,6 +53,28 @@ def root():
 def health():
     logger.info("Se accedió a Health")
     return {"status": "ok"}
+
+@app.get("/datasets")
+def datos():
+    import os
+    from app.services.H5Viwer import H5Viewer
+
+    folder = os.path.join(os.path.dirname(__file__), "training_data")
+    if not os.path.exists(folder):
+        return {"error": "La carpeta no existe"}
+    archivos = [f for f in os.listdir(folder) if f.endswith(".h5")]
+    if not archivos:
+        return {"error": "No hay archivos .h5 en la carpeta"}
+    resultados = []
+    for archivo in archivos:
+        ruta = os.path.join(folder, archivo)
+        viewer = H5Viewer(ruta)
+        contenido = viewer.listar_contenido()
+        # Convierte el contenido a string o dict si no lo es
+        if not isinstance(contenido, (dict, list, str, int, float, bool, type(None))):
+            contenido = str(contenido)
+        resultados.append({"archivo": archivo, "contenido": contenido})
+    return resultados
 
 # Dependencia para la base de datos
 def get_db():
@@ -88,7 +112,7 @@ def abrir_camara_enhanced():
     return FileResponse(file_path)
 
 # Instancias globales
-data_logger = DataLogger("training_data.h5")
+data_logger = DataLogger(base_dir="training_data", file_prefix="training_data")
 recorder = RecordingState()
 
 @app.websocket("/ws")

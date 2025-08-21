@@ -1,114 +1,68 @@
+import os
 import h5py
 import numpy as np
 from datetime import datetime
-import os
 
 class DataLogger:
-    def __init__(self, file_path=None):
-        """Inicializa el logger con archivo HDF5 en la carpeta recordings"""
-        if file_path is None:
-            # Guardar en la carpeta recordings con estructura de carpetas
-            base_dir = os.path.join(os.getcwd(), "recordings")
-            os.makedirs(base_dir, exist_ok=True)
-            self.file_path = os.path.join(base_dir, "datos_entrenamiento.h5")
-        else:
-            self.file_path = file_path
-        
-        # Crear subcarpetas para organización
-        manos_dir = os.path.join(os.path.dirname(self.file_path), "manos")
-        caras_dir = os.path.join(os.path.dirname(self.file_path), "caras")
-        os.makedirs(manos_dir, exist_ok=True)
-        os.makedirs(caras_dir, exist_ok=True)
-
-    def _get_current_group_name(self, prefix, label):
-        """Genera nombre de grupo con timestamp + label"""
-        return f"{prefix}_{label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    def __init__(self, base_dir="training_data", file_prefix="training_data"):
+        """
+        Inicializa el logger y crea la carpeta de destino si no existe.
+        - base_dir: carpeta base dentro de app (ejemplo: 'app/saved_data')
+        - file_prefix: prefijo del archivo (ejemplo: 'training_data')
+        """
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        self.save_dir = os.path.join(current_dir, '..', base_dir)
+        os.makedirs(self.save_dir, exist_ok=True)
+        self.file_prefix = file_prefix
 
     def save(self, data, data_type="hands", label="normal"):
         """
-        Guarda datos serializados en el archivo HDF5 con nombres en español.
-        
-        Args:
-            data: Lista de diccionarios con datos serializados
-            data_type: 'hands' o 'faces'
-            label: etiqueta de emoción ('feliz', 'normal', etc.)
+        Guarda cada sesión en un archivo .h5 diferente por etiqueta.
         """
         if not data:
             return False
 
-        try:
-            with h5py.File(self.file_path, 'a') as hdf:
-                group_name = self._get_current_group_name(data_type, label)
-                group = hdf.create_group(group_name)
+        # Nombre de archivo por etiqueta
+        file_name = f"{self.file_prefix}_{label}.h5"
+        file_path = os.path.join(self.save_dir, file_name)
 
-                # Guardamos la etiqueta como atributo
-                group.attrs['etiqueta'] = label  
+        try:
+            group_name = f"{data_type}_{label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            with h5py.File(file_path, 'a') as hdf:
+                group = hdf.create_group(group_name)
+                group.attrs['etiqueta'] = label
                 group.attrs['tipo_datos'] = data_type
                 group.attrs['timestamp'] = datetime.now().isoformat()
 
                 if data_type == "hands":
                     for i, mano in enumerate(data):
-                        # Guardar landmarks con nombres en español
-                        landmarks_array = []
-                        for punto in mano:
-                            landmarks_array.append([
-                                punto['x'],  # coordenada_x
-                                punto['y'],  # coordenada_y
-                                punto['z']   # coordenada_z
-                            ])
-                        
-                        dataset = group.create_dataset(
-                            f"mano_{i}", 
-                            data=np.array(landmarks_array)
-                        )
-                        # Agregar descripción en español
-                        dataset.attrs['descripcion'] = f"Landmarks de mano {i} para etiqueta '{label}'"
+                        landmarks_array = [[p['x'], p['y'], p['z']] for p in mano]
+                        dataset = group.create_dataset(f"mano_{i}", data=np.array(landmarks_array))
                         dataset.attrs['columnas'] = ['coordenada_x', 'coordenada_y', 'coordenada_z']
-                        
+
                 elif data_type == "faces":
                     for i, cara in enumerate(data):
-                        # Guardar datos de cara con nombres en español
-                        dataset = group.create_dataset(
-                            f"cara_{i}", 
-                            data=np.array([
-                                cara['xmin'],      # x_minimo
-                                cara['ymin'],      # y_minimo
-                                cara['width'],     # ancho
-                                cara['height'],    # alto
-                                cara['score']      # puntuacion_confianza
-                            ])
-                        )
-                        # Agregar descripción en español
-                        dataset.attrs['descripcion'] = f"Datos de detección de cara {i} para etiqueta '{label}'"
+                        dataset = group.create_dataset(f"cara_{i}", data=np.array([
+                            cara['xmin'], cara['ymin'], cara['width'], cara['height'], cara['score']
+                        ]))
                         dataset.attrs['columnas'] = ['x_minimo', 'y_minimo', 'ancho', 'alto', 'puntuacion_confianza']
-                
-                print(f"✅ Datos guardados exitosamente en: {self.file_path}")
-                print(f"   Grupo: {group_name}")
-                print(f"   Tipo: {data_type}")
-                print(f"   Etiqueta: {label}")
-                print(f"   Total de elementos: {len(data)}")
-                
-                return True
+
+            print(f"✅ Datos guardados en grupo: {group_name} en archivo: {file_name}")
+            return True
+
         except Exception as e:
             print(f"❌ Error al guardar datos: {e}")
             return False
 
+    def list_files(self):
+        """Devuelve la lista de archivos .h5 en la carpeta"""
+        try:
+            return [f for f in os.listdir(self.save_dir) if f.endswith(".h5")]
+        except:
+            return []
 
-class RecordingState:
-    """
-    Controla el estado de grabación (manos o cara, y etiqueta).
-    Útil para integrarlo con WebSocket.
-    """
-    def __init__(self):
-        self.recording = False
-        self.label = "normal"
-        self.data_type = "hands"  # "hands" o "faces"
-
-    def start(self, label="normal", data_type="hands"):
-        self.recording = True
-        self.label = label
-        self.data_type = data_type
-
-    def stop(self):
-        self.recording = False
-                                                                                                                
+    def get_file_path(self, filename=None):
+        """Obtiene la ruta completa de un archivo .h5 por etiqueta"""
+        if filename:
+            return os.path.join(self.save_dir, filename)
+        return self.save_dir
