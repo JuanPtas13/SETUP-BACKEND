@@ -1,7 +1,8 @@
-from fastapi import FastAPI, Depends, HTTPException, Response, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Response, UploadFile, File,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from loguru import logger
 import logging
 import numpy as np
 from pydantic import BaseModel
@@ -10,12 +11,16 @@ from sqlalchemy import text
 from os import getcwd, path
 import base64
 import cv2
-
+import os
 # Import internos
 from app.deteccion.hand_detector import HandDetector
 from app.database import engine, SessionLocal
 from app.models.models import Base
-from app.services.video_prosesing import VideoProcessingService  # Ruta corregida
+from app.services.video_prosesing import VideoProcessingService  
+from app.deteccion.face_detector import FaceDetector
+from app.services.data_logger import DataLogger
+from app.services.state_manager import RecordingState
+from app.services.H5Viwer import H5Viewer
 
 app = FastAPI()
 
@@ -24,6 +29,7 @@ Base.metadata.create_all(bind=engine)
 
 # Inicializar servicios globalmente
 hand_detector = HandDetector()
+face_detector = FaceDetector()
 video_service = VideoProcessingService()
 
 # Configuración de logging
@@ -32,6 +38,9 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Logs de debugging para troubleshooting
+logging.basicConfig(level=logging.DEBUG)
 
 # -------------------- Rutas --------------------
 
@@ -44,6 +53,28 @@ def root():
 def health():
     logger.info("Se accedió a Health")
     return {"status": "ok"}
+
+@app.get("/datasets")
+def datos():
+    import os
+    from app.services.H5Viwer import H5Viewer
+
+    folder = os.path.join(os.path.dirname(__file__), "training_data")
+    if not os.path.exists(folder):
+        return {"error": "La carpeta no existe"}
+    archivos = [f for f in os.listdir(folder) if f.endswith(".h5")]
+    if not archivos:
+        return {"error": "No hay archivos .h5 en la carpeta"}
+    resultados = []
+    for archivo in archivos:
+        ruta = os.path.join(folder, archivo)
+        viewer = H5Viewer(ruta)
+        contenido = viewer.listar_contenido()
+        # Convierte el contenido a string o dict si no lo es
+        if not isinstance(contenido, (dict, list, str, int, float, bool, type(None))):
+            contenido = str(contenido)
+        resultados.append({"archivo": archivo, "contenido": contenido})
+    return resultados
 
 # Dependencia para la base de datos
 def get_db():
@@ -68,21 +99,105 @@ def check_database_connection(db: Session = Depends(get_db)):
             "mensaje": f"Fallo en la conexión: {str(e)}"
         }
 
-@app.post("/frame")
-async def process_frame(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        npimg = np.frombuffer(contents, np.uint8)
-        frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+@app.get("/camara")
+def abrir_camara():
+    logger.info("Se accedió a la camara")
+    file_path = os.path.join(os.path.dirname(__file__), "..", "client", "index.html")
+    return FileResponse(file_path)
 
-        # Procesar frame con el servicio de video
-        result = video_service.process_frame(frame)
+@app.get("/camara_enhanced")
+def abrir_camara_enhanced():
+    logger.info("Se accedió a la camara mejorada")
+    file_path = os.path.join(os.path.dirname(__file__), "..", "client", "index_enhanced.html")
+    return FileResponse(file_path)
 
-        return JSONResponse(content={"status": "ok", "result": result})
-    except Exception as e:
-        logger.error(f"Error procesando frame: {e}")
-        return JSONResponse(content={"status": "error", "error": str(e)})
+# Instancias globales
+data_logger = DataLogger(base_dir="training_data", file_prefix="training_data")
+recorder = RecordingState()
 
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print("Cliente conectado al WebSocket")
+
+    while True:
+        try:
+            data = await websocket.receive_text()
+
+            # --- Comandos para grabar ---
+            if data.startswith("START_RECORDING"):
+                _, label, data_type = data.split(":")
+                recorder.start(label=label, data_type=data_type)
+                await websocket.send_text(f"[SERVER] Grabando {data_type} con etiqueta '{label}'")
+                continue
+
+            if data == "STOP_RECORDING":
+                recorder.stop()
+                await websocket.send_text("[SERVER] Grabación detenida")
+                continue
+
+            # --- Procesamiento de frames ---
+            if data.startswith("data:image"):
+                data = data.split(",")[1]
+
+            img_bytes = base64.b64decode(data)
+            npimg = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                continue
+
+            # --- Detección de Manos ---
+            hands = hand_detector.detect_hands_in_frame(frame)
+            serialized_hands = []
+            if isinstance(hands, list):
+                for hand in hands:
+                    if hasattr(hand, 'landmark'):
+                        hand_landmarks = []
+                        for landmark in hand.landmark:
+                            hand_landmarks.append({
+                                'x': landmark.x,
+                                'y': landmark.y,
+                                'z': landmark.z
+                            })
+                        serialized_hands.append(hand_landmarks)
+
+            # --- Detección de Caras ---
+            face_results = face_detector.detectar_rostros(frame)
+            serialized_faces = []
+            if face_results.detections:
+                for detection in face_results.detections:
+                    bboxC = detection.location_data.relative_bounding_box
+                    ih, iw, _ = frame.shape
+                    x, y, w, h = int(bboxC.xmin * iw), int(bboxC.ymin * ih), \
+                                 int(bboxC.width * iw), int(bboxC.height * ih)
+                    serialized_faces.append({
+                        'xmin': x,
+                        'ymin': y,
+                        'width': w,
+                        'height': h,
+                        'score': detection.score[0]
+                    })
+
+            # --- Guardar si estamos en modo grabación ---
+            if recorder.recording:
+                if recorder.data_type == "hands" and serialized_hands:
+                    data_logger.save(serialized_hands, "hands", recorder.label)
+                elif recorder.data_type == "faces" and serialized_faces:
+                    data_logger.save(serialized_faces, "faces", recorder.label)
+
+            # --- Respuesta al cliente ---
+            await websocket.send_json({
+                "manos": serialized_hands,
+                "cara": serialized_faces
+            })
+
+        except Exception as e:
+            print(f"Error en WebSocket: {e}")
+            break
+
+
+ 
 # -------------------- CORS --------------------
 app.add_middleware(
     CORSMiddleware,
