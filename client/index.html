@@ -1,21 +1,129 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <script src="camara.js"></script>
   <title>Detección en Vivo</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f1420;
+      --panel: #151b2b;
+      --muted: #94a3b8;
+      --text: #e6edf6;
+      --brand: #6c5ce7;
+      --brand-2: #8b80ff;
+      --accent: #22d3ee;
+      --card: #1b2235;
+      --stroke: #263043;
+      --radius: 16px;
+      --gap: 20px;
+    }
+
+    body {
+      margin: 0;
+      padding: var(--gap);
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .main-container {
+      display: flex;
+      align-items: center;
+      gap: 40px;
+    }
+
+    .video-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #video {
+      width: 400px;
+      height: 300px;
+      border: 3px solid var(--stroke);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+      background: var(--panel);
+    }
+
+    .status-container {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .status {
+      font-size: 14px;
+      font-weight: 500;
+      padding: 8px 12px;
+      background: var(--card);
+      text-align: left;
+      min-width: 180px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      letter-spacing: 0.5px;
+    }
+
+    .indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid var(--stroke);
+      transition: all 0.3s ease;
+      box-shadow: 0 0 8px rgba(0,0,0,0.3);
+    }
+
+    .indicator.red {
+      background: #ef4444;
+      border-color: #dc2626;
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.5);
+    }
+
+    .indicator.yellow {
+      background: #eab308;
+      border-color: #ca8a04;
+      box-shadow: 0 0 12px rgba(234, 179, 8, 0.5);
+    }
+
+    .indicator.green {
+      background: #22c55e;
+      border-color: #16a34a;
+      box-shadow: 0 0 12px rgba(34, 197, 94, 0.5);
+    }
+
+    #canvas {
+      display: none;
+    }
+  </style>
 </head>
 <body>
-  <video id="video" width="640" height="480" autoplay></video>
-  <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+  <div class="main-container">
+    <div class="video-container">
+      <video id="video" autoplay></video>
+    </div>
 
-  <!-- Estado de manos -->
-  <div id="handDetectionStatus" style="font-size: 24px; color: blue; margin-top: 10px;">
-    Esperando detección de manos...
+    <div class="status-container">
+      <div id="handDetectionStatus" class="status">
+        <div id="handIndicator" class="indicator red"></div>
+        <span>Esperando detección...</span>
+      </div>
+
+      <div id="faceDetectionStatus" class="status">
+        <div id="faceIndicator" class="indicator red"></div>
+        <span>Esperando detección...</span>
+      </div>
+    </div>
   </div>
 
-  <!-- Estado de cara -->
-  <div id="faceDetectionStatus" style="font-size: 24px; color: blue; margin-top: 10px;">
-    Esperando detección de cara...
-  </div>
+  <canvas id="canvas" width="400" height="300"></canvas>
 
   <script>
     const video = document.getElementById('video');
@@ -24,6 +132,8 @@
 
     const handDetectionStatus = document.getElementById('handDetectionStatus');
     const faceDetectionStatus = document.getElementById('faceDetectionStatus');
+    const handIndicator = document.getElementById('handIndicator');
+    const faceIndicator = document.getElementById('faceIndicator');
 
     // Construir URL del WebSocket dinámicamente
     const wsUrl = `ws://${window.location.host}/ws`;
@@ -38,7 +148,7 @@
     };
 
     ws.onclose = () => {
-      console.warn("⚠️ WebSocket cerrado.");
+      console.warn("⚠ WebSocket cerrado.");
     };
 
     ws.onmessage = (event) => {
@@ -46,20 +156,25 @@
 
       // ----------------- Estado de manos -----------------
       if (data.manos && data.manos.length > 0) {
-        handDetectionStatus.textContent = `Manos detectadas: ${data.manos.length}`;
-        handDetectionStatus.style.color = 'green';
+        if (data.manos.length === 1) {
+          handDetectionStatus.querySelector('span').textContent = `1 mano detectada`;
+          handIndicator.className = 'indicator yellow';
+        } else if (data.manos.length >= 2) {
+          handDetectionStatus.querySelector('span').textContent = `${data.manos.length} manos detectadas`;
+          handIndicator.className = 'indicator green';
+        }
       } else {
-        handDetectionStatus.textContent = "No se detectan manos.";
-        handDetectionStatus.style.color = 'red';
+        handDetectionStatus.querySelector('span').textContent = "Sin manos";
+        handIndicator.className = 'indicator red';
       }
 
       // ----------------- Estado de cara -----------------
       if (data.cara && data.cara.length > 0) {
-        faceDetectionStatus.textContent = "Cara detectada";
-        faceDetectionStatus.style.color = 'green';
+        faceDetectionStatus.querySelector('span').textContent = "Cara detectada";
+        faceIndicator.className = 'indicator green';
       } else {
-        faceDetectionStatus.textContent = "No se detecta cara.";
-        faceDetectionStatus.style.color = 'red';
+        faceDetectionStatus.querySelector('span').textContent = "Sin cara";
+        faceIndicator.className = 'indicator red';
       }
     };
 
